@@ -1,20 +1,9 @@
 <div align="center">
-    <h1>AutoCheckBJMF 班级魔方自动签到</h1>
-    <img src="https://img.shields.io/github/license/JasonYANG170/AutoCheckBJMF?label=License&style=for-the-badge">
-    <img src="https://img.shields.io/github/commit-activity/w/JasonYANG170/AutoCheckBJMF?style=for-the-badge">
-<img src="https://img.shields.io/github/languages/count/JasonYANG170/AutoCheckBJMF?logo=python&style=for-the-badge">
-	<br>
-    	<a href="https://discord.com/invite/az3ceRmgVe"><img alt="Discord" src="https://img.shields.io/discord/978108215499816980?style=social&logo=discord&label=echosec"></a>
-  <br>
-<img src="https://github.com/JasonYANG170/AutoCheckBJMF/assets/39414350/7400a5d2-1031-4e31-b189-4cbfa2df51e6">
-	
-这是一项基于Python语言的班级魔方GPS自动签到Script
-
-<br>
-
-</div>
+    <h1>New AutoCheckBJMF 新班级魔方自动签到</h1>
 
 严禁将本程序用于违法用途，请遵守地区法规，另如有违背平台利益请与我联系撤销平台支持
+
+本程序是基于AutoCheckBJMF的拙劣修复与修改版本，主要修改为，作为青龙面板的脚本使用，所有配置直接写入脚本内部，删除了定时代码，修复了对是否签到成功的查询失败问题
 ## 支持平台
 **Windows、Mac、Linux**
 ## 支持的签到模式  
@@ -36,12 +25,8 @@
 
 如遇问题，请向我提出issues
 
-## 使用教程
+## 使用教程（沿用原作者的配置与教程）
 维基Wiki https://github.com/JasonYANG170/AutoCheckBJMF/wiki
 
-## 自行打包
-`pyinstaller main.spec`
 
 ## 喜欢这个项目，请为我点个Star ⭐ 
-
-[![Star History Chart](https://api.star-history.com/svg?repos=JasonYANG170/AutoCheckBJMF&type=Date)](https://star-history.com/#star-history/star-history&Date)
