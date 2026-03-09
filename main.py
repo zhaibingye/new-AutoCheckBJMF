@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-班级魔方自动签到脚本
-基于 API 文档实现自动签到功能
+新班级魔方自动签到脚本
+基于班级魔方API实现自动签到功能
 """
 
 import re
@@ -214,3 +214,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
