@@ -1,178 +1,216 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import requests
+"""
+班级魔方自动签到脚本
+基于 API 文档实现自动签到功能
+"""
+
 import re
-import sys
-import time
-from bs4 import BeautifulSoup
-from datetime import datetime
+import json
+import requests
+from typing import Optional, List, Dict
 
 # =========================================================
-# >>> 用户配置区域 (请直接在此处修改参数) <<<
+# >>> 用户配置区域 (请根据实际情况修改以下参数) <<<
 # =========================================================
 
-class Config:
-    # 1. 班级ID (必填) - 从抓包的 URL 中获取
-    # 例如 /student/course/114514/punchs 中的 114514
-    CLASS_ID = "114514"
+# 【必需】完整 Cookie 字符串
+# 获取方法：
+#   1. 在微信中打开班级魔方小程序并登录
+#   2. 使用抓包工具（如 Reqable、Charles）抓取请求
+#   3. 复制请求头中完整的 Cookie 值
+# 示例值格式：
+#   wxid=xxx; remember_student_xxx=yyy; s=zzz
+# 注意：直接粘贴完整 Cookie 即可，脚本会自动提取 remember_student 的值
+RAW_COOKIE = """wxid=ollOC0dHSmdEVIEt4EoCaZ3a43is$1766584302$874051aab30d42cf08eaf65fb2c0e01d; remember_student_59ba36addc2b2f9401580f014c7f58ea4e30989d=3520620%7CtHOgosIQd4m5J4AI3BMmyTRdfr92HODsqd3L23pwr1I8STLIClPQVEhw1g2w%7C; s=6Jh5atntonNcPONYpTsg9aKhGgCjlAJyMveUEQqU"""
 
-    # 2. 腾讯地图坐标 (必填)
-    # 拾取工具: https://lbs.qq.com/getPoint/
-    # 建议保留小数点后6位
-    LAT = "34.114873"  # 纬度
-    LNG = "108.942932" # 经度
-    ACC = "10"         # 精度
+# 【必需】课程 ID
+# 获取方法：
+#   1. 在班级魔方中进入需要签到的课程
+#   2. 查看页面 URL，格式为：/student/course/{课程ID}/punchs
+#   3. 其中的数字就是课程 ID
+# 示例：URL 为 /student/course/121411/punchs，则课程 ID 为 121411
+COURSE_ID = 121411
 
-    # 3. 身份凭证 Cookie (必填)
-    # 填写完整的 Cookie 字符串 (包含 remember_student_xxx)
-    COOKIE = ""
+# 【必需】GPS 签到位置
+# 获取方法：
+#   1. 打开腾讯地图拾取坐标工具：https://lbs.qq.com/getPoint/
+#   2. 在地图上找到签到地点的位置
+#   3. 点击该位置，复制显示的坐标
+# 注意：建议使用签到地点的实际坐标，否则可能因距离过远导致签到失败
+GPS_LAT = 34.11486   # 纬度（小数格式，保留5-6位小数）
+GPS_LNG = 108.94291  # 经度（小数格式，保留5-6位小数）
+GPS_ACC = 35.0       # GPS 精度，单位：米（一般填 10-50 即可）
 
-    # 4. PushPlus 通知 Token (选填)
-    # 需要微信通知请填写，否则留空 ""
-    PUSHPLUS_TOKEN = "" 
+# ============== 核心代码 ==============
 
-# =========================================================
-# >>> 核心逻辑区域 <<<
-# =========================================================
 
-def get_timestamp():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-def get_headers(referer_url):
-    """构造与抓包一致的请求头"""
-    return {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/wxpic,image/webp,image/apng,*/*;q=0.8',
-        'Referer': referer_url,
-        'Cookie': Config.COOKIE,
-        'Upgrade-Insecure-Requests': '1',
-        'Host': 'k8n.cn'
-    }
-
-def push_notify(content):
-    """发送 PushPlus 通知"""
-    if not Config.PUSHPLUS_TOKEN:
-        return
-    print(f"[{get_timestamp()}] 正在发送通知...")
-    url = 'http://www.pushplus.plus/send'
-    data = {
-        'token': Config.PUSHPLUS_TOKEN,
-        'title': '班级魔法签到结果',
-        'content': content
-    }
-    try:
-        requests.post(url, json=data, timeout=5)
-    except Exception as e:
-        print(f"通知发送失败: {e}")
-
-def check_status_on_page(html_content, punch_id):
+def parse_remember_cookie(raw_cookie: str) -> tuple[str, str]:
     """
-    解析页面 HTML，判断指定 ID 的任务是否包含 '已签' 标记
-    根据用户提供的 HTML 结构：
-    <div class="card-body" ... id="punchcard_4427853">
-        ...
-        <span class="layui-badge layui-bg-green">已签</span>
-    </div>
+    从完整的 Cookie 字符串中提取 remember_student 的名称和值
+
+    Args:
+        raw_cookie: 完整的 Cookie 字符串
+
+    Returns:
+        (cookie_name, cookie_value) 元组
+
+    Raises:
+        ValueError: 如果找不到 remember_student cookie
     """
-    try:
-        soup = BeautifulSoup(html_content, 'html.parser')
-        # 查找 ID 为 punchcard_XXXX 的 div
-        target_div = soup.find('div', id=f"punchcard_{punch_id}")
-        
-        if target_div:
-            # 在这个 div 内部查找是否存在 class 为 layui-bg-green 且文本为 "已签" 的 span
-            badge = target_div.find('span', class_='layui-bg-green', string='已签')
-            if badge:
-                return True # 已签到
-            
-        return False # 未签到
-    except Exception as e:
-        print(f"解析页面状态出错: {e}")
-        return False
+    # 使用正则匹配 remember_student_xxx=value
+    pattern = r'(remember_student_[a-f0-9]+)=([^;]+)'
+    match = re.search(pattern, raw_cookie)
+
+    if not match:
+        raise ValueError("Cookie 中未找到 remember_student，请检查 Cookie 是否正确")
+
+    return match.group(1), match.group(2)
+
+
+BASE_URL = "https://bj.k8n.cn"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+}
+
+
+class BJMFClient:
+    """班级魔方客户端"""
+
+    def __init__(self, cookie_name: str, cookie_value: str, course_id: int):
+        self.session = requests.Session()
+        self.session.headers.update(HEADERS)
+        self.session.cookies.set(cookie_name, cookie_value)
+        self.course_id = course_id
+        self.user_id: Optional[int] = None
+
+    def get_ongoing_punchs(self) -> List[Dict]:
+        """获取正在进行的签到列表"""
+        url = f"{BASE_URL}/student/course/{self.course_id}/punchs"
+        params = {"op": "ing"}
+
+        resp = self.session.get(url, params=params)
+        resp.raise_for_status()
+
+        # 解析用户信息
+        self._parse_user_info(resp.text)
+
+        # 解析签到列表
+        return self._parse_punch_list(resp.text)
+
+    def _parse_user_info(self, html: str) -> None:
+        """从 HTML 中解析用户信息"""
+        # 匹配 gconfig 变量
+        pattern = r"var\s+gconfig\s*=\s*\{[^}]*uid\s*:\s*(\d+)"
+        match = re.search(pattern, html)
+        if match:
+            self.user_id = int(match.group(1))
+            print(f"[INFO] 用户 ID: {self.user_id}")
+
+    def _parse_punch_list(self, html: str) -> List[Dict]:
+        """从 HTML 中解析签到列表"""
+        punchs = []
+
+        # 匹配签到卡片（根据实际 HTML 结构调整）
+        # 这里需要根据实际返回的 HTML 结构来解析
+        # 示例：查找签到链接 /student/punchs/course/{course_id}/{punch_id}
+        pattern = rf"/student/punchs/course/{self.course_id}/(\d+)"
+        matches = re.findall(pattern, html)
+
+        for punch_id in matches:
+            punchs.append({"punch_id": int(punch_id)})
+
+        return punchs
+
+    def do_punch(self, punch_id: int, lat: float, lng: float, acc: float = 35.0) -> bool:
+        """执行签到"""
+        if not self.user_id:
+            print("[ERROR] 未获取到用户 ID")
+            return False
+
+        url = f"{BASE_URL}/student/punchs/course/{self.course_id}/{punch_id}"
+        params = {"sid": self.user_id}
+        data = {
+            "lat": lat,
+            "lng": lng,
+            "acc": acc,
+            "res": ""
+        }
+
+        # 添加 Referer
+        headers = {"Referer": url}
+
+        resp = self.session.post(url, params=params, data=data, headers=headers)
+        resp.raise_for_status()
+
+        # 检查签到结果
+        if "签到成功" in resp.text or "成功" in resp.text:
+            print(f"[SUCCESS] 签到成功！签到 ID: {punch_id}")
+            return True
+        elif "已签到" in resp.text or "已经签到" in resp.text:
+            print(f"[INFO] 已经签到过了，签到 ID: {punch_id}")
+            return True
+        else:
+            print(f"[WARN] 签到结果未知，签到 ID: {punch_id}")
+            # 保存响应用于调试
+            with open("punch_response.html", "w", encoding="utf-8") as f:
+                f.write(resp.text)
+            return False
+
 
 def main():
-    print(f"========== 班级魔法自动签到启动 ==========")
-    print(f"时间: {get_timestamp()}")
-    
-    # 0. 基础检查
-    if "这里填写" in Config.CLASS_ID or "这里填写" in Config.COOKIE:
-        print("❌ 错误: 请先在代码顶部的 Config 区域填写 ClassID 和 Cookie！")
-        sys.exit(1)
+    """主函数"""
+    print("=" * 50)
+    print("班级魔方自动签到")
+    print("=" * 50)
 
-    base_url = f'http://k8n.cn/student/course/{Config.CLASS_ID}/punchs'
-    referer_url = f'http://k8n.cn/student/course/{Config.CLASS_ID}'
-    headers = get_headers(referer_url)
-
+    # 解析 Cookie
     try:
-        # 1. 获取任务列表页面
-        print(f"[{get_timestamp()}] 正在获取课程页面...")
-        res_list = requests.get(base_url, headers=headers, timeout=10)
-        
-        if res_list.status_code != 200:
-            print(f"❌ 页面请求失败，状态码: {res_list.status_code}")
-            return
+        cookie_name, cookie_value = parse_remember_cookie(RAW_COOKIE)
+        print(f"[INFO] 已解析 Cookie: {cookie_name}")
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return
 
-        # 2. 提取所有签到 ID (包括 GPS 和 二维码)
-        # 页面 ID 格式通常为 punchcard_123456
-        all_ids = re.findall(r'punchcard_(\d+)', res_list.text)
-        # 有些旧代码可能还在用 punch_gps，也兼容一下
-        gps_ids = re.findall(r'punch_gps\((\d+)\)', res_list.text)
-        
-        unique_ids = list(set(all_ids + gps_ids))
+    # 初始化客户端
+    client = BJMFClient(cookie_name, cookie_value, COURSE_ID)
 
-        if not unique_ids:
-            print(f"[{get_timestamp()}] ✅ 当前没有检测到任何签到活动。")
-            return
+    # 获取正在进行的签到
+    print("\n[STEP 1] 获取签到列表...")
+    try:
+        punchs = client.get_ongoing_punchs()
+    except requests.RequestException as e:
+        print(f"[ERROR] 网络请求失败: {e}")
+        return
 
-        print(f"[{get_timestamp()}] ⚠️ 检测到 {len(unique_ids)} 个签到卡片，ID: {unique_ids}")
+    if not punchs:
+        print("[INFO] 当前没有正在进行的签到")
+        return
 
-        # 3. 遍历处理每个任务
-        for pid in unique_ids:
-            print(f"\n--- 处理任务 ID: {pid} ---")
-            
-            # 3.1 检查是否已经签到 (预检查)
-            if check_status_on_page(res_list.text, pid):
-                print(f"[{get_timestamp()}] 🟢 该任务显示 [已签]，跳过。")
-                continue
+    print(f"[INFO] 发现 {len(punchs)} 个正在进行的签到")
 
-            # 3.2 执行签到请求
-            print(f"[{get_timestamp()}] 🔴 状态为未签，正在提交签到请求...")
-            post_url = f"http://k8n.cn/student/punchs/course/{Config.CLASS_ID}/{pid}"
-            payload = {
-                'id': pid,
-                'lat': Config.LAT,
-                'lng': Config.LNG,
-                'acc': Config.ACC,
-                'res': '',
-                'gps_addr': ''
-            }
-            
-            try:
-                # 发送 POST 请求
-                requests.post(post_url, headers=headers, data=payload, timeout=10)
-                
-                # 3.3 验证阶段：再次刷新列表页，查看是否变更为“已签”
-                # 注意：这里必须重新请求 GET 页面，因为 POST 返回的可能只是 JSON 或简单的 200 OK
-                print(f"[{get_timestamp()}] 正在刷新页面验证结果...")
-                time.sleep(1) # 稍等一下服务器处理
-                
-                res_verify = requests.get(base_url, headers=headers, timeout=10)
-                
-                if check_status_on_page(res_verify.text, pid):
-                    success_msg = f"签到成功！ID: {pid} 状态已更新为 [已签]"
-                    print(f"[{get_timestamp()}] ✅ {success_msg}")
-                    push_notify(success_msg + f"\n时间: {get_timestamp()}")
-                else:
-                    fail_msg = f"签到可能失败，ID: {pid} 页面仍未显示 [已签]"
-                    print(f"[{get_timestamp()}] ❌ {fail_msg}")
-                    # 也可以选择推送失败消息
-                    
-            except Exception as e:
-                print(f"[{get_timestamp()}] 请求异常: {e}")
+    # 执行签到
+    print(f"\n[STEP 2] 开始签到...")
+    print(f"[INFO] GPS 位置: ({GPS_LAT}, {GPS_LNG}), 精度: {GPS_ACC}m")
 
-    except Exception as e:
-        print(f"[{get_timestamp()}] ❌ 运行出错: {e}")
-    finally:
-        print(f"\n========== 脚本运行结束 ==========")
+    for punch in punchs:
+        punch_id = punch["punch_id"]
+        print(f"\n[ACTION] 正在签到 ID: {punch_id}")
+
+        try:
+            success = client.do_punch(punch_id, GPS_LAT, GPS_LNG, GPS_ACC)
+            if success:
+                print(f"[DONE] 签到 ID {punch_id} 完成")
+        except requests.RequestException as e:
+            print(f"[ERROR] 签到失败: {e}")
+
+    print("\n" + "=" * 50)
+    print("签到任务完成")
+    print("=" * 50)
+
 
 if __name__ == "__main__":
     main()
