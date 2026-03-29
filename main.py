@@ -22,7 +22,7 @@ from typing import Optional, List, Dict
 # 示例值格式：
 #   wxid=xxx; remember_student_xxx=yyy; s=zzz
 # 注意：直接粘贴完整 Cookie 即可，脚本会自动提取 remember_student 的值
-RAW_COOKIE = """wxid=ollOC0dHSmdEVIEt4EoCaZ3a43is$1766584302$874051aab30d42cf08eaf65fb2c0e01d; remember_student_59ba36addc2b2f9401580f014c7f58ea4e30989d=3520620%7CtHOgosIQd4m5J4AI3BMmyTRdfr92HODsqd3L23pwr1I8STLIClPQVEhw1g2w%7C; s=6Jh5atntonNcPONYpTsg9aKhGgCjlAJyMveUEQqU"""
+RAW_COOKIE = """wxid=xxx; remember_student_xxx=yyy; s=zzz"""
 
 # 【必需】课程 ID
 # 获取方法：
@@ -114,14 +114,19 @@ class BJMFClient:
         """从 HTML 中解析签到列表"""
         punchs = []
 
-        # 匹配签到卡片（根据实际 HTML 结构调整）
-        # 这里需要根据实际返回的 HTML 结构来解析
-        # 示例：查找签到链接 /student/punchs/course/{course_id}/{punch_id}
-        pattern = rf"/student/punchs/course/{self.course_id}/(\d+)"
+        # 方法1：从签到按钮链接提取 /student/punchw/course/{course_id}/{punch_id}
+        pattern = rf'/student/punchw/course/{self.course_id}/(\d+)'
         matches = re.findall(pattern, html)
 
         for punch_id in matches:
             punchs.append({"punch_id": int(punch_id)})
+
+        # 方法2：从按钮 ID 提取 gps_btn_{punch_id}
+        if not punchs:
+            pattern = r'id="gps_btn_(\d+)"'
+            matches = re.findall(pattern, html)
+            for punch_id in matches:
+                punchs.append({"punch_id": int(punch_id)})
 
         return punchs
 
@@ -131,7 +136,7 @@ class BJMFClient:
             print("[ERROR] 未获取到用户 ID")
             return False
 
-        url = f"{BASE_URL}/student/punchs/course/{self.course_id}/{punch_id}"
+        url = f"{BASE_URL}/student/punchw/course/{self.course_id}/{punch_id}"
         params = {"sid": self.user_id}
         data = {
             "lat": lat,
@@ -214,4 +219,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
